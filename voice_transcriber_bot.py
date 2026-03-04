@@ -1,16 +1,27 @@
-import os
-import time
 import hashlib
-import telebot
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-import requests
+import logging
+import os
 import tempfile
-from groq import Groq
 from collections import defaultdict
+
+import requests
+import telebot
+from groq import Groq
+from telebot.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+
+MAX_TELEGRAM_MESSAGE_LENGTH = 4096
+
+if not TELEGRAM_BOT_TOKEN:
+    raise RuntimeError("Environment variable TELEGRAM_BOT_TOKEN is required")
+if not GROQ_API_KEY:
+    raise RuntimeError("Environment variable GROQ_API_KEY is required")
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
 groq_client = Groq(api_key=GROQ_API_KEY)
@@ -29,16 +40,32 @@ def get_text(key):
     return transcription_store.get(key)
 
 
-def download_telegram_file(file_id):
-    file_info = bot.get_file(file_id)
-    file_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_info.file_path}"
+def split_for_telegram(text, max_len=MAX_TELEGRAM_MESSAGE_LENGTH):
+    chunks = []
+    remaining = text.strip()
+
+    while len(remaining) > max_len:
+        split_at = remaining.rfind("\n", 0, max_len)
+        if split_at <= 0:
+            split_at = max_len
+        chunks.append(remaining[:split_at].rstrip())
+        remaining = remaining[split_at:].lstrip()
+
+    if remaining:
+        chunks.append(remaining)
+    return chunks
+
+
+def download_telegram_file(file_path):
+    file_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
     response = requests.get(file_url, timeout=60)
     response.raise_for_status()
     return response.content
 
 
 def transcribe_audio(audio_bytes, filename="audio.ogg"):
-    with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as tmp:
+    ext = os.path.splitext(filename)[1] or ".ogg"
+    with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
         tmp.write(audio_bytes)
         tmp_path = tmp.name
     try:
@@ -55,23 +82,26 @@ def transcribe_audio(audio_bytes, filename="audio.ogg"):
 
 
 def summarize_text(text):
-    # Сначала пробуем Gemini (таймаут 15 сек)
-    try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
-        payload = {"contents": [{"parts": [{"text": (
-            "Сделай краткое саммари этого текста. "
-            "Выдели ключевые мысли и выводы. "
-            "Отвечай на том же языке что и текст. "
-            "Используй маркированный список (•).\n\n" + text
-        )}]}]}
-        response = requests.post(url, json=payload, timeout=15)
-        if response.status_code == 200:
-            result = response.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-            return {"text": result, "model": "Gemini 2.0 Flash ✨"}
-    except Exception:
-        pass
+    # Сначала пробуем Gemini (если ключ задан)
+    if GEMINI_API_KEY:
+        try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
+            payload = {
+                "contents": [{"parts": [{"text": (
+                    "Сделай краткое саммари этого текста. "
+                    "Выдели ключевые мысли и выводы. "
+                    "Отвечай на том же языке что и текст. "
+                    "Используй маркированный список (•).\n\n" + text
+                )}]}]
+            }
+            response = requests.post(url, json=payload, timeout=15)
+            if response.status_code == 200:
+                result = response.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+                return {"text": result, "model": "Gemini 2.0 Flash ✨"}
+        except Exception:
+            logger.exception("Gemini summarize failed, fallback to Groq")
 
-    # Gemini не ответил — используем Groq
+    # Gemini не ответил — ипользуем Groq
     result = groq_client.chat.completions.create(
         messages=[
             {
@@ -102,6 +132,7 @@ def process_audio(message, file_id, filename="audio.ogg"):
     chat_id = message.chat.id
     user_id = message.from_user.id
     status_msg = bot.reply_to(message, "⏳ Транскрибирую...")
+
     try:
         file_info = bot.get_file(file_id)
         if file_info.file_size and file_info.file_size > 19 * 1024 * 1024:
@@ -109,34 +140,47 @@ def process_audio(message, file_id, filename="audio.ogg"):
                 "❌ Файл слишком большой. Telegram разрешает максимум 20 МБ.\n"
                 "Сожми аудио или обрежь его на части.",
                 chat_id=chat_id,
-                message_id=status_msg.message_id
+                message_id=status_msg.message_id,
             )
             return
-        audio_bytes = download_telegram_file(file_id)
+
+        audio_bytes = download_telegram_file(file_info.file_path)
         text = transcribe_audio(audio_bytes, filename)
         if not text:
             bot.edit_message_text("❌ Не удалось распознать речь.", chat_id=chat_id, message_id=status_msg.message_id)
             return
 
-        # Считаем статистику
         stats[user_id]["count"] += 1
-
         text_key = store_text(text)
-        bot.edit_message_text(
-            f"📄 *Транскрипция:*\n\n{text}",
-            chat_id=chat_id,
-            message_id=status_msg.message_id,
-            parse_mode="Markdown",
-            reply_markup=make_keyboard(text_key)
-        )
+
+        transcription_text = f"📄 Транскрипция:\n\n{text}"
+        parts = split_for_telegram(transcription_text)
+
+        if len(parts) == 1:
+            bot.edit_message_text(
+                parts[0],
+                chat_id=chat_id,
+                message_id=status_msg.message_id,
+                reply_markup=make_keyboard(text_key),
+            )
+        else:
+            bot.edit_message_text(
+                parts[0],
+                chat_id=chat_id,
+                message_id=status_msg.message_id,
+            )
+            for idx, part in enumerate(parts[1:], start=1):
+                bot.send_message(
+                    chat_id=chat_id,
+                    text=part,
+                    reply_to_message_id=status_msg.message_id if idx == len(parts) - 1 else None,
+                    reply_markup=make_keyboard(text_key) if idx == len(parts) - 1 else None,
+                )
+
     except Exception as e:
         bot.edit_message_text(f"❌ Ошибка: {str(e)}", chat_id=chat_id, message_id=status_msg.message_id)
-        print(f"[ERROR] {e}")
+        logger.exception("Failed to process audio")
 
-
-# ─────────────────────────────────────────────
-# Команды
-# ─────────────────────────────────────────────
 
 @bot.message_handler(commands=["start", "help"])
 def handle_start(message):
@@ -150,7 +194,7 @@ def handle_start(message):
         "• Кнопка 📝 Краткое изложение после транскрибации\n"
         "• /stats — твоя статистика\n\n"
         "Просто отправь голосовое! 🎤",
-        parse_mode="Markdown"
+        parse_mode="Markdown",
     )
 
 
@@ -164,13 +208,9 @@ def handle_stats(message):
         f"📊 *Твоя статистика:*\n\n"
         f"• Транскрибировано: *{count}* сообщений\n"
         f"• Саммари сделано: *{summaries}*",
-        parse_mode="Markdown"
+        parse_mode="Markdown",
     )
 
-
-# ─────────────────────────────────────────────
-# Обработка аудио
-# ─────────────────────────────────────────────
 
 @bot.message_handler(content_types=["voice"])
 def handle_voice(message):
@@ -191,17 +231,24 @@ def handle_audio(message):
 @bot.message_handler(content_types=["document"])
 def handle_document(message):
     mime = message.document.mime_type or ""
-    allowed = ["audio/mpeg", "audio/ogg", "audio/wav", "audio/x-wav",
-               "audio/mp4", "audio/m4a", "audio/x-m4a", "audio/flac",
-               "audio/webm", "video/mp4", "video/webm"]
-    if mime in allowed or mime.startswith("audio/"):
-        filename = message.document.file_name or "audio.ogg"
-        process_audio(message, message.document.file_id, filename)
+    filename = (message.document.file_name or "").lower()
+    allowed = [
+        "audio/mpeg",
+        "audio/ogg",
+        "audio/wav",
+        "audio/x-wav",
+        "audio/mp4",
+        "audio/m4a",
+        "audio/x-m4a",
+        "audio/flac",
+        "audio/webm",
+        "video/mp4",
+        "video/webm",
+    ]
+    supported_ext = (".mp3", ".ogg", ".wav", ".m4a", ".flac", ".webm", ".mp4")
+    if mime in allowed or mime.startswith("audio/") or filename.endswith(supported_ext):
+        process_audio(message, message.document.file_id, message.document.file_name or "audio.ogg")
 
-
-# ─────────────────────────────────────────────
-# Кнопка саммари
-# ─────────────────────────────────────────────
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("sum:"))
 def handle_summary(call):
@@ -211,23 +258,23 @@ def handle_summary(call):
         if not text:
             bot.answer_callback_query(call.id, "❌ Отправь голосовое заново.", show_alert=True)
             return
+
         bot.answer_callback_query(call.id, "⏳ Генерирую саммари...")
         summary = summarize_text(text)
-
-        # Считаем саммари
         stats[call.from_user.id]["summaries"] += 1
 
-        bot.send_message(
-            chat_id=call.message.chat.id,
-            text=f"📝 *Краткое изложение* (_от {summary['model']}_):\n\n{summary['text']}",
-            parse_mode="Markdown",
-            reply_to_message_id=call.message.message_id
-        )
+        summary_text = f"📝 Краткое изложение (от {summary['model']}):\n\n{summary['text']}"
+        for chunk in split_for_telegram(summary_text):
+            bot.send_message(
+                chat_id=call.message.chat.id,
+                text=chunk,
+                reply_to_message_id=call.message.message_id,
+            )
     except Exception as e:
         bot.answer_callback_query(call.id, f"❌ Ошибка: {str(e)}", show_alert=True)
-        print(f"[ERROR] {e}")
+        logger.exception("Failed to generate summary")
 
 
 if __name__ == "__main__":
-    print("🤖 Бот запущен!")
+    logger.info("🤖 Бот запущен!")
     bot.infinity_polling(timeout=60, long_polling_timeout=60, allowed_updates=["message", "callback_query"])
