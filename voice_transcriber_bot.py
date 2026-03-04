@@ -51,6 +51,7 @@ def transcribe_audio(audio_bytes, filename="audio.ogg"):
 
 
 def summarize_text(text):
+    import time
     result = groq_client.chat.completions.create(
         messages=[
             {
@@ -81,7 +82,6 @@ def process_audio(message, file_id, filename="audio.ogg"):
     chat_id = message.chat.id
     status_msg = bot.reply_to(message, "⏳ Транскрибирую...")
     try:
-        # Проверяем размер файла
         file_info = bot.get_file(file_id)
         if file_info.file_size and file_info.file_size > 19 * 1024 * 1024:
             bot.edit_message_text(
@@ -109,6 +109,29 @@ def process_audio(message, file_id, filename="audio.ogg"):
         print(f"[ERROR] {e}")
 
 
+# ─────────────────────────────────────────────
+# Команды
+# ─────────────────────────────────────────────
+
+@bot.message_handler(commands=["start", "help"])
+def handle_start(message):
+    bot.reply_to(
+        message,
+        "🎙️ *Бот-транскрибатор голосовых сообщений*\n\n"
+        "Отправь голосовое, кружок или аудиофайл — переведу в текст!\n\n"
+        "🔧 *Что умею:*\n"
+        "• Транскрибация голосовых и кружков\n"
+        "• Аудиофайлы MP3, OGG, WAV, M4A, FLAC\n"
+        "• Кнопка 📝 Краткое изложение после транскрибации\n\n"
+        "Просто отправь голосовое! 🎤",
+        parse_mode="Markdown"
+    )
+
+
+# ─────────────────────────────────────────────
+# Обработка аудио
+# ─────────────────────────────────────────────
+
 @bot.message_handler(content_types=["voice"])
 def handle_voice(message):
     process_audio(message, message.voice.file_id, "voice.ogg")
@@ -135,6 +158,10 @@ def handle_document(message):
         filename = message.document.file_name or "audio.ogg"
         process_audio(message, message.document.file_id, filename)
 
+
+# ─────────────────────────────────────────────
+# Кнопка саммари
+# ─────────────────────────────────────────────
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("sum:"))
 def handle_summary(call):
