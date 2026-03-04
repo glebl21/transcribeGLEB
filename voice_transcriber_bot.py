@@ -132,4 +132,4 @@ def handle_summary(call):
 
 if __name__ == "__main__":
     print("🤖 Бот запущен!")
-    bot.infinity_polling(timeout=30, long_polling_timeout=30)
+    bot.infinity_polling(timeout=60, long_polling_timeout=60, allowed_updates=["message", "callback_query"])
