@@ -6,6 +6,7 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 import requests
 import tempfile
 from groq import Groq
+from collections import defaultdict
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
@@ -15,6 +16,7 @@ bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
 groq_client = Groq(api_key=GROQ_API_KEY)
 
 transcription_store = {}
+stats = defaultdict(lambda: {"count": 0, "summaries": 0})  # user_id -> статистика
 
 
 def store_text(text):
@@ -98,6 +100,7 @@ def make_keyboard(text_key):
 
 def process_audio(message, file_id, filename="audio.ogg"):
     chat_id = message.chat.id
+    user_id = message.from_user.id
     status_msg = bot.reply_to(message, "⏳ Транскрибирую...")
     try:
         file_info = bot.get_file(file_id)
@@ -114,6 +117,10 @@ def process_audio(message, file_id, filename="audio.ogg"):
         if not text:
             bot.edit_message_text("❌ Не удалось распознать речь.", chat_id=chat_id, message_id=status_msg.message_id)
             return
+
+        # Считаем статистику
+        stats[user_id]["count"] += 1
+
         text_key = store_text(text)
         bot.edit_message_text(
             f"📄 *Транскрипция:*\n\n{text}",
@@ -140,8 +147,23 @@ def handle_start(message):
         "🔧 *Что умею:*\n"
         "• Транскрибация голосовых и кружков\n"
         "• Аудиофайлы MP3, OGG, WAV, M4A, FLAC\n"
-        "• Кнопка 📝 Краткое изложение после транскрибации\n\n"
+        "• Кнопка 📝 Краткое изложение после транскрибации\n"
+        "• /stats — твоя статистика\n\n"
         "Просто отправь голосовое! 🎤",
+        parse_mode="Markdown"
+    )
+
+
+@bot.message_handler(commands=["stats"])
+def handle_stats(message):
+    user_id = message.from_user.id
+    count = stats[user_id]["count"]
+    summaries = stats[user_id]["summaries"]
+    bot.reply_to(
+        message,
+        f"📊 *Твоя статистика:*\n\n"
+        f"• Транскрибировано: *{count}* сообщений\n"
+        f"• Саммари сделано: *{summaries}*",
         parse_mode="Markdown"
     )
 
@@ -191,6 +213,10 @@ def handle_summary(call):
             return
         bot.answer_callback_query(call.id, "⏳ Генерирую саммари...")
         summary = summarize_text(text)
+
+        # Считаем саммари
+        stats[call.from_user.id]["summaries"] += 1
+
         bot.send_message(
             chat_id=call.message.chat.id,
             text=f"📝 *Краткое изложение* (_от {summary['model']}_):\n\n{summary['text']}",
