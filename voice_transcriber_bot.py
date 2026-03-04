@@ -109,6 +109,23 @@ def handle_video_note(message):
     process_audio(message, message.video_note.file_id, "video_note.mp4")
 
 
+@bot.message_handler(content_types=["audio"])
+def handle_audio(message):
+    filename = message.audio.file_name or "audio.mp3"
+    process_audio(message, message.audio.file_id, filename)
+
+
+@bot.message_handler(content_types=["document"])
+def handle_document(message):
+    mime = message.document.mime_type or ""
+    allowed = ["audio/mpeg", "audio/ogg", "audio/wav", "audio/x-wav",
+               "audio/mp4", "audio/m4a", "audio/x-m4a", "audio/flac",
+               "audio/webm", "video/mp4", "video/webm"]
+    if mime in allowed or mime.startswith("audio/"):
+        filename = message.document.file_name or "audio.ogg"
+        process_audio(message, message.document.file_id, filename)
+
+
 @bot.callback_query_handler(func=lambda call: call.data.startswith("sum:"))
 def handle_summary(call):
     try:
