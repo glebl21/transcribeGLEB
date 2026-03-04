@@ -53,7 +53,7 @@ def transcribe_audio(audio_bytes, filename="audio.ogg"):
 
 
 def summarize_text(text):
-    # Пробуем Gemini
+    # Сначала пробуем Gemini (таймаут 15 сек)
     try:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
         payload = {"contents": [{"parts": [{"text": (
@@ -62,17 +62,13 @@ def summarize_text(text):
             "Отвечай на том же языке что и текст. "
             "Используй маркированный список (•).\n\n" + text
         )}]}]}
-        for attempt in range(3):
-            response = requests.post(url, json=payload, timeout=30)
-            if response.status_code == 429:
-                time.sleep(10 * (attempt + 1))
-                continue
-            response.raise_for_status()
+        response = requests.post(url, json=payload, timeout=15)
+        if response.status_code == 200:
             return response.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
     except Exception:
         pass
 
-    # Если Gemini недоступен — используем Groq как запасной
+    # Gemini не ответил — используем Groq
     result = groq_client.chat.completions.create(
         messages=[
             {
