@@ -64,7 +64,8 @@ def summarize_text(text):
         )}]}]}
         response = requests.post(url, json=payload, timeout=15)
         if response.status_code == 200:
-            return response.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+            result = response.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+            return {"text": result, "model": "Gemini 2.0 Flash ✨"}
     except Exception:
         pass
 
@@ -86,7 +87,7 @@ def summarize_text(text):
         max_tokens=500,
         temperature=0.4,
     )
-    return result.choices[0].message.content.strip()
+    return {"text": result.choices[0].message.content.strip(), "model": "Groq LLaMA 3.3 70B ⚡"}
 
 
 def make_keyboard(text_key):
@@ -192,7 +193,7 @@ def handle_summary(call):
         summary = summarize_text(text)
         bot.send_message(
             chat_id=call.message.chat.id,
-            text=f"📝 *Краткое изложение:*\n\n{summary}",
+            text=f"📝 *Краткое изложение* (_от {summary['model']}_):\n\n{summary['text']}",
             parse_mode="Markdown",
             reply_to_message_id=call.message.message_id
         )
