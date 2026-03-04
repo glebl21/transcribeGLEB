@@ -1,4 +1,5 @@
 import os
+import time
 import hashlib
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -8,7 +9,7 @@ from groq import Groq
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "ВАШ_GEMINI_КЛЮЧ")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
 groq_client = Groq(api_key=GROQ_API_KEY)
@@ -52,25 +53,21 @@ def transcribe_audio(audio_bytes, filename="audio.ogg"):
 
 
 def summarize_text(text):
-    import time
-    result = groq_client.chat.completions.create(
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "Ты помощник, который делает краткое резюме голосовых сообщений. "
-                    "Выдели ключевые мысли и выводы. "
-                    "Отвечай на том же языке, что и текст. "
-                    "Используй маркированный список (•)."
-                ),
-            },
-            {"role": "user", "content": f"Сделай краткое саммари:\n\n{text}"},
-        ],
-        model="llama-3.3-70b-versatile",
-        max_tokens=500,
-        temperature=0.4,
-    )
-    return result.choices[0].message.content.strip()
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
+    payload = {"contents": [{"parts": [{"text": (
+        "Сделай краткое саммари этого текста. "
+        "Выдели ключевые мысли и выводы. "
+        "Отвечай на том же языке что и текст. "
+        "Используй маркированный список (•).\n\n" + text
+    )}]}]}
+    for attempt in range(3):
+        response = requests.post(url, json=payload, timeout=30)
+        if response.status_code == 429:
+            time.sleep(10 * (attempt + 1))
+            continue
+        response.raise_for_status()
+        return response.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+    raise Exception("Gemini перегружен, попробуй через минуту.")
 
 
 def make_keyboard(text_key):
