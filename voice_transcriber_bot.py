@@ -53,21 +53,44 @@ def transcribe_audio(audio_bytes, filename="audio.ogg"):
 
 
 def summarize_text(text):
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
-    payload = {"contents": [{"parts": [{"text": (
-        "Сделай краткое саммари этого текста. "
-        "Выдели ключевые мысли и выводы. "
-        "Отвечай на том же языке что и текст. "
-        "Используй маркированный список (•).\n\n" + text
-    )}]}]}
-    for attempt in range(3):
-        response = requests.post(url, json=payload, timeout=30)
-        if response.status_code == 429:
-            time.sleep(10 * (attempt + 1))
-            continue
-        response.raise_for_status()
-        return response.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-    raise Exception("Gemini перегружен, попробуй через минуту.")
+    # Пробуем Gemini
+    try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
+        payload = {"contents": [{"parts": [{"text": (
+            "Сделай краткое саммари этого текста. "
+            "Выдели ключевые мысли и выводы. "
+            "Отвечай на том же языке что и текст. "
+            "Используй маркированный список (•).\n\n" + text
+        )}]}]}
+        for attempt in range(3):
+            response = requests.post(url, json=payload, timeout=30)
+            if response.status_code == 429:
+                time.sleep(10 * (attempt + 1))
+                continue
+            response.raise_for_status()
+            return response.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+    except Exception:
+        pass
+
+    # Если Gemini недоступен — используем Groq как запасной
+    result = groq_client.chat.completions.create(
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "Сделай краткое саммари текста. "
+                    "Выдели ключевые мысли и выводы. "
+                    "Отвечай на том же языке что и текст. "
+                    "Используй маркированный список (•)."
+                ),
+            },
+            {"role": "user", "content": text},
+        ],
+        model="llama-3.3-70b-versatile",
+        max_tokens=500,
+        temperature=0.4,
+    )
+    return result.choices[0].message.content.strip()
 
 
 def make_keyboard(text_key):
