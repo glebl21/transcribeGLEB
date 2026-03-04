@@ -81,6 +81,16 @@ def process_audio(message, file_id, filename="audio.ogg"):
     chat_id = message.chat.id
     status_msg = bot.reply_to(message, "⏳ Транскрибирую...")
     try:
+        # Проверяем размер файла
+        file_info = bot.get_file(file_id)
+        if file_info.file_size and file_info.file_size > 19 * 1024 * 1024:
+            bot.edit_message_text(
+                "❌ Файл слишком большой. Telegram разрешает максимум 20 МБ.\n"
+                "Сожми аудио или обрежь его на части.",
+                chat_id=chat_id,
+                message_id=status_msg.message_id
+            )
+            return
         audio_bytes = download_telegram_file(file_id)
         text = transcribe_audio(audio_bytes, filename)
         if not text:
