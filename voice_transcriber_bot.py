@@ -156,26 +156,18 @@ def process_audio(message, file_id, filename="audio.ogg"):
         transcription_text = f"📄 Транскрипция:\n\n{text}"
         parts = split_for_telegram(transcription_text)
 
-        if len(parts) == 1:
-            bot.edit_message_text(
-                parts[0],
+        # Кнопка всегда на первом сообщении
+        bot.edit_message_text(
+            parts[0],
+            chat_id=chat_id,
+            message_id=status_msg.message_id,
+            reply_markup=make_keyboard(text_key),
+        )
+        for part in parts[1:]:
+            bot.send_message(
                 chat_id=chat_id,
-                message_id=status_msg.message_id,
-                reply_markup=make_keyboard(text_key),
+                text=part,
             )
-        else:
-            bot.edit_message_text(
-                parts[0],
-                chat_id=chat_id,
-                message_id=status_msg.message_id,
-            )
-            for idx, part in enumerate(parts[1:], start=1):
-                bot.send_message(
-                    chat_id=chat_id,
-                    text=part,
-                    reply_to_message_id=status_msg.message_id if idx == len(parts) - 1 else None,
-                    reply_markup=make_keyboard(text_key) if idx == len(parts) - 1 else None,
-                )
 
     except Exception as e:
         bot.edit_message_text(f"❌ Ошибка: {str(e)}", chat_id=chat_id, message_id=status_msg.message_id)
