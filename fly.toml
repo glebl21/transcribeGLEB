@@ -1,0 +1,5 @@
+app = "transcribegleb"
+primary_region = "iad"
+
+[processes]
+  app = "python bot.py"
