@@ -63,9 +63,16 @@ def split_for_telegram(text, max_len=MAX_TELEGRAM_MESSAGE_LENGTH):
 
 def download_telegram_file(file_path):
     file_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
-    response = requests.get(file_url, timeout=60)
-    response.raise_for_status()
-    return response.content
+    for attempt in range(3):
+        try:
+            response = requests.get(file_url, timeout=60)
+            response.raise_for_status()
+            return response.content
+        except Exception as e:
+            if attempt == 2:
+                raise
+            import time
+            time.sleep(2)
 
 
 def transcribe_audio(audio_bytes, filename="audio.ogg"):
