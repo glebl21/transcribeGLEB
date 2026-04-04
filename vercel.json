@@ -9,7 +9,11 @@
   "routes": [
     {
       "src": "/(.*)",
-      "dest": "bot.py"
+      "dest": "bot.py",
+      "headers": {
+        "x-vercel-skip-middleware": "1"
+      }
     }
-  ]
+  ],
+  "trailingSlash": false
 }
