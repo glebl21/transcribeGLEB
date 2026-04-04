@@ -272,8 +272,7 @@ def index():
 
 
 if __name__ == "__main__":
-    # Локальный запуск через polling
-    logger.info("🤖 Бот запущен локально (polling)!")
+    logger.info("🤖 Бот запущен!")
     bot.remove_webhook()
     bot.infinity_polling(timeout=60, long_polling_timeout=60,
                          allowed_updates=["message", "callback_query"])
