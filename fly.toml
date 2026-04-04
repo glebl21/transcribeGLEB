@@ -1,4 +1,4 @@
-app = "transcribegleb"
+app = "transcribegleb-bot-gleb"
 primary_region = "iad"
 
 [processes]
