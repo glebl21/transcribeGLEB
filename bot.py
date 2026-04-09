@@ -131,7 +131,7 @@ def transcribe_with_assemblyai(audio_bytes, filename="audio.ogg"):
         tmp_path = tmp.name
     try:
         config = aai.TranscriptionConfig(
-            speech_model=aai.SpeechModel.nano,
+            speech_model=aai.SpeechModel.best,
             language_detection=True,
         )
         transcript = aai.Transcriber().transcribe(tmp_path, config=config)
