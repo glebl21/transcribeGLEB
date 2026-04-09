@@ -124,20 +124,25 @@ def download_telegram_file(file_path):
 # ─────────────────────────────────────────────
 
 def transcribe_with_assemblyai(audio_bytes, filename="audio.ogg"):
-    """Primary: AssemblyAI Universal-2 (best accuracy, 185h free)."""
+    """Primary: AssemblyAI Universal-3 Pro + Universal-2 fallback (185h free)."""
     ext = os.path.splitext(filename)[1] or ".ogg"
     with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
         tmp.write(audio_bytes)
         tmp_path = tmp.name
     try:
         config = aai.TranscriptionConfig(
-            speech_model=aai.SpeechModel.best,
+            speech_models=["universal-3-pro", "universal-2"],
             language_detection=True,
         )
         transcript = aai.Transcriber().transcribe(tmp_path, config=config)
         if transcript.status == aai.TranscriptStatus.error:
             raise RuntimeError(f"AssemblyAI error: {transcript.error}")
-        return transcript.text.strip(), "AssemblyAI Universal-2"
+        
+        # Определяем какая модель использовалась
+        model_used = transcript.json_response.get('speech_model_used', 'AssemblyAI')
+        model_name = "AssemblyAI U3 Pro" if model_used == "universal-3-pro" else "AssemblyAI Universal-2"
+        
+        return transcript.text.strip(), model_name
     finally:
         os.unlink(tmp_path)
 
