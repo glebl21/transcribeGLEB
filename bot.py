@@ -50,9 +50,6 @@ def get_webhook_base_url():
     url = os.environ.get("RENDER_EXTERNAL_URL")
     if url:
         return url.rstrip("/")
-    domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN")
-    if domain:
-        return f"https://{domain}"
     return None
 
 
@@ -146,7 +143,7 @@ def summarize_text(text):
             {"role": "user", "content": text},
         ],
         model="gpt-5.4",
-        max_tokens=500,
+        max_completion_tokens=500,
         temperature=0.4,
     )
     return {"text": result.choices[0].message.content.strip(), "model": "GPT-5.4"}
@@ -310,7 +307,7 @@ if __name__ == "__main__":
         setup_webhook()
         app.run(host="0.0.0.0", port=PORT)
     else:
-        logger.info("Polling mode — no WEBHOOK_URL / RENDER_EXTERNAL_URL / RAILWAY_PUBLIC_DOMAIN detected")
+        logger.info("Polling mode — no WEBHOOK_URL / RENDER_EXTERNAL_URL detected")
         bot.remove_webhook()
         bot.infinity_polling(timeout=60, long_polling_timeout=60,
                              allowed_updates=["message", "callback_query"])
