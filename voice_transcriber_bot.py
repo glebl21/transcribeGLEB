@@ -4,27 +4,25 @@ import os
 import tempfile
 from collections import defaultdict
 
-import requests
 import telebot
-from groq import Groq
+from openai import OpenAI
 from telebot.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 
 MAX_TELEGRAM_MESSAGE_LENGTH = 4096
 
 if not TELEGRAM_BOT_TOKEN:
     raise RuntimeError("Environment variable TELEGRAM_BOT_TOKEN is required")
-if not GROQ_API_KEY:
-    raise RuntimeError("Environment variable GROQ_API_KEY is required")
+if not OPENAI_API_KEY:
+    raise RuntimeError("Environment variable OPENAI_API_KEY is required")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
-groq_client = Groq(api_key=GROQ_API_KEY)
+openai_client = OpenAI(api_key=OPENAI_API_KEY)
 
 transcription_store = {}
 stats = defaultdict(lambda: {"count": 0, "summaries": 0})  # user_id -> статистика
@@ -58,6 +56,7 @@ def split_for_telegram(text, max_len=MAX_TELEGRAM_MESSAGE_LENGTH):
 
 def download_telegram_file(file_path):
     file_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
+    import requests
     response = requests.get(file_url, timeout=60)
     response.raise_for_status()
     return response.content
@@ -70,9 +69,9 @@ def transcribe_audio(audio_bytes, filename="audio.ogg"):
         tmp_path = tmp.name
     try:
         with open(tmp_path, "rb") as audio_file:
-            transcription = groq_client.audio.transcriptions.create(
-                file=(filename, audio_file.read()),
-                model="whisper-large-v3",
+            transcription = openai_client.audio.transcriptions.create(
+                file=audio_file,
+                model="whisper-1",
                 language=None,
                 response_format="text",
             )
@@ -82,27 +81,7 @@ def transcribe_audio(audio_bytes, filename="audio.ogg"):
 
 
 def summarize_text(text):
-    # Сначала пробуем Gemini (если ключ задан)
-    if GEMINI_API_KEY:
-        try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
-            payload = {
-                "contents": [{"parts": [{"text": (
-                    "Сделай краткое саммари этого текста. "
-                    "Выдели ключевые мысли и выводы. "
-                    "Отвечай на том же языке что и текст. "
-                    "Используй маркированный список (•).\n\n" + text
-                )}]}]
-            }
-            response = requests.post(url, json=payload, timeout=15)
-            if response.status_code == 200:
-                result = response.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-                return {"text": result, "model": "Gemini 2.0 Flash ✨"}
-        except Exception:
-            logger.exception("Gemini summarize failed, fallback to Groq")
-
-    # Gemini не ответил — ипользуем Groq
-    result = groq_client.chat.completions.create(
+    result = openai_client.chat.completions.create(
         messages=[
             {
                 "role": "system",
@@ -115,11 +94,11 @@ def summarize_text(text):
             },
             {"role": "user", "content": text},
         ],
-        model="llama-3.3-70b-versatile",
+        model="gpt-4o",
         max_tokens=500,
         temperature=0.4,
     )
-    return {"text": result.choices[0].message.content.strip(), "model": "Groq LLaMA 3.3 70B ⚡"}
+    return {"text": result.choices[0].message.content.strip(), "model": "GPT-4o 🚀"}
 
 
 def make_keyboard(text_key):
@@ -181,9 +160,9 @@ def handle_start(message):
         "🎙️ *Бот-транскрибатор голосовых сообщений*\n\n"
         "Отправь голосовое, кружок или аудиофайл — переведу в текст!\n\n"
         "🔧 *Что умею:*\n"
-        "• Транскрибация голосовых и кружков\n"
+        "• Транскрибация голосовых и кружков (OpenAI Whisper-1)\n"
         "• Аудиофайлы MP3, OGG, WAV, M4A, FLAC\n"
-        "• Кнопка 📝 Краткое изложение после транскрибации\n"
+        "• Кнопка 📝 Краткое изложение (GPT-4o)\n"
         "• /stats — твоя статистика\n\n"
         "Просто отправь голосовое! 🎤",
         parse_mode="Markdown",
