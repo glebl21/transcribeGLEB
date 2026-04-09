@@ -129,24 +129,37 @@ def transcribe_audio(audio_bytes, filename="audio.ogg"):
 
 
 def summarize_text(text):
+    word_count = len(text.split())
+    if word_count < 60:
+        instruction = (
+            "Ты — ассистент для обработки голосовых сообщений.\n"
+            "Текст ниже — короткое голосовое сообщение.\n"
+            "Перефразируй его в 1-2 чётких предложения, сохранив весь смысл.\n"
+            "Не добавляй ничего от себя. Отвечай на том же языке что и текст."
+        )
+    else:
+        instruction = (
+            "Ты — ассистент для обработки голосовых сообщений.\n"
+            "Текст ниже — расшифровка голосового сообщения.\n\n"
+            "Сделай структурированное саммари по правилам:\n"
+            "1. Первая строка — суть сообщения в ОДНОМ предложении (жирным: **суть**).\n"
+            "2. Затем ключевые тезисы маркированным списком (•), максимум 5-7 пунктов.\n"
+            "3. Если есть конкретные задачи, даты, имена или цифры — обязательно включи их.\n"
+            "4. Если есть явный вывод или призыв к действию — выдели в конце отдельной строкой: «Вывод: ...»\n\n"
+            "Не добавляй ничего от себя. Не выдумывай фактов.\n"
+            "Отвечай на том же языке что и текст."
+        )
+
     result = openai_client.chat.completions.create(
         messages=[
-            {
-                "role": "system",
-                "content": (
-                    "Сделай краткое саммари текста. "
-                    "Выдели ключевые мысли и выводы. "
-                    "Отвечай на том же языке что и текст. "
-                    "Используй маркированный список (•)."
-                ),
-            },
+            {"role": "system", "content": instruction},
             {"role": "user", "content": text},
         ],
-        model="gpt-5.4",
-        max_completion_tokens=500,
-        temperature=0.4,
+        model="gpt-5.4-mini",
+        max_completion_tokens=600,
+        temperature=0.3,
     )
-    return {"text": result.choices[0].message.content.strip(), "model": "GPT-5.4"}
+    return {"text": result.choices[0].message.content.strip(), "model": "GPT-5.4 Mini"}
 
 
 def make_keyboard(text_key):
@@ -207,7 +220,7 @@ def handle_start(message):
         "🔧 *Что умею:*\n"
         "• Транскрибация голосовых и кружков (Groq Whisper V3 Turbo)\n"
         "• Аудиофайлы MP3, OGG, WAV, M4A, FLAC\n"
-        "• Кнопка 📝 Краткое изложение (GPT-5.4)\n"
+        "• Кнопка 📝 Краткое изложение (GPT-5.4 Mini)\n"
         "• /stats — твоя статистика\n\n"
         "Просто отправь голосовое! 🎤",
         parse_mode="Markdown",
