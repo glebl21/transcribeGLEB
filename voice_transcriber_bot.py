@@ -5,16 +5,20 @@ import tempfile
 from collections import defaultdict
 
 import telebot
+from groq import Groq
 from openai import OpenAI
 from telebot.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 
 MAX_TELEGRAM_MESSAGE_LENGTH = 4096
 
 if not TELEGRAM_BOT_TOKEN:
     raise RuntimeError("Environment variable TELEGRAM_BOT_TOKEN is required")
+if not GROQ_API_KEY:
+    raise RuntimeError("Environment variable GROQ_API_KEY is required")
 if not OPENAI_API_KEY:
     raise RuntimeError("Environment variable OPENAI_API_KEY is required")
 
@@ -22,6 +26,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
+groq_client = Groq(api_key=GROQ_API_KEY)
 openai_client = OpenAI(api_key=OPENAI_API_KEY)
 
 transcription_store = {}
@@ -69,9 +74,9 @@ def transcribe_audio(audio_bytes, filename="audio.ogg"):
         tmp_path = tmp.name
     try:
         with open(tmp_path, "rb") as audio_file:
-            transcription = openai_client.audio.transcriptions.create(
-                file=audio_file,
-                model="whisper-1",
+            transcription = groq_client.audio.transcriptions.create(
+                file=(filename, audio_file.read()),
+                model="whisper-large-v3-turbo",
                 language=None,
                 response_format="text",
             )
@@ -94,11 +99,11 @@ def summarize_text(text):
             },
             {"role": "user", "content": text},
         ],
-        model="gpt-4o",
+        model="gpt-5.4",
         max_tokens=500,
         temperature=0.4,
     )
-    return {"text": result.choices[0].message.content.strip(), "model": "GPT-4o 🚀"}
+    return {"text": result.choices[0].message.content.strip(), "model": "GPT-5.4 🚀"}
 
 
 def make_keyboard(text_key):
@@ -160,9 +165,9 @@ def handle_start(message):
         "🎙️ *Бот-транскрибатор голосовых сообщений*\n\n"
         "Отправь голосовое, кружок или аудиофайл — переведу в текст!\n\n"
         "🔧 *Что умею:*\n"
-        "• Транскрибация голосовых и кружков (OpenAI Whisper-1)\n"
+        "• Транскрибация голосовых и кружков (Groq Whisper V3 Turbo)\n"
         "• Аудиофайлы MP3, OGG, WAV, M4A, FLAC\n"
-        "• Кнопка 📝 Краткое изложение (GPT-4o)\n"
+        "• Кнопка 📝 Краткое изложение (GPT-5.4)\n"
         "• /stats — твоя статистика\n\n"
         "Просто отправь голосовое! 🎤",
         parse_mode="Markdown",
