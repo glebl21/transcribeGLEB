@@ -207,11 +207,11 @@ def summarize_text(text):
             {"role": "system", "content": instruction},
             {"role": "user", "content": text},
         ],
-        model="gpt-5.4-mini",
+        model="gpt-5.4",
         max_completion_tokens=600,
         temperature=0.3,
     )
-    return {"text": result.choices[0].message.content.strip(), "model": "GPT-5.4 Mini"}
+    return {"text": result.choices[0].message.content.strip(), "model": "GPT-5.4"}
 
 
 def make_keyboard(text_key):
@@ -273,7 +273,7 @@ def handle_start(message):
         "🔧 *Что умею:*\n"
         "• Транскрибация (AssemblyAI Universal-2 + Groq Whisper)\n"
         "• Аудиофайлы MP3, OGG, WAV, M4A, FLAC\n"
-        "• Кнопка 📝 Краткое изложение (GPT-5.4 Mini)\n"
+        "• Кнопка 📝 Краткое изложение (GPT-5.4)\n"
         "• /stats — твоя статистика\n\n"
         "Просто отправь голосовое! 🎤",
         parse_mode="Markdown",
