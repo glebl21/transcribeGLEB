@@ -5,6 +5,7 @@ import tempfile
 import time as _time
 from collections import defaultdict
 
+import assemblyai as aai
 import requests
 import telebot
 from flask import Flask, request, abort
@@ -15,6 +16,7 @@ from telebot.types import InlineKeyboardButton, InlineKeyboardMarkup
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+ASSEMBLYAI_API_KEY = os.environ.get("ASSEMBLYAI_API_KEY")
 WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "mysecret")
 PORT = int(os.environ.get("PORT", 5000))
 
@@ -35,12 +37,19 @@ bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
 groq_client = Groq(api_key=GROQ_API_KEY)
 openai_client = OpenAI(api_key=OPENAI_API_KEY)
 
+# AssemblyAI setup (optional — fallback to Groq if not configured)
+if ASSEMBLYAI_API_KEY:
+    aai.settings.api_key = ASSEMBLYAI_API_KEY
+    logger.info("AssemblyAI configured — primary transcription engine")
+else:
+    logger.warning("ASSEMBLYAI_API_KEY not set — using Groq Whisper only")
+
 transcription_store = {}
 stats = defaultdict(lambda: {"count": 0, "summaries": 0})
 
 
 # ─────────────────────────────────────────────
-# Webhook URL detection (Render / Railway)
+# Webhook URL detection (Render)
 # ─────────────────────────────────────────────
 
 def get_webhook_base_url():
@@ -110,7 +119,31 @@ def download_telegram_file(file_path):
             _time.sleep(2)
 
 
-def transcribe_audio(audio_bytes, filename="audio.ogg"):
+# ─────────────────────────────────────────────
+# Transcription: AssemblyAI → Groq fallback
+# ─────────────────────────────────────────────
+
+def transcribe_with_assemblyai(audio_bytes, filename="audio.ogg"):
+    """Primary: AssemblyAI Universal-2 (best accuracy, 185h free)."""
+    ext = os.path.splitext(filename)[1] or ".ogg"
+    with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
+        tmp.write(audio_bytes)
+        tmp_path = tmp.name
+    try:
+        config = aai.TranscriptionConfig(
+            speech_model=aai.SpeechModel.nano,
+            language_detection=True,
+        )
+        transcript = aai.Transcriber().transcribe(tmp_path, config=config)
+        if transcript.status == aai.TranscriptStatus.error:
+            raise RuntimeError(f"AssemblyAI error: {transcript.error}")
+        return transcript.text.strip(), "AssemblyAI Universal-2"
+    finally:
+        os.unlink(tmp_path)
+
+
+def transcribe_with_groq(audio_bytes, filename="audio.ogg"):
+    """Fallback: Groq Whisper Large V3 Turbo (free, fast)."""
     ext = os.path.splitext(filename)[1] or ".ogg"
     with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
         tmp.write(audio_bytes)
@@ -123,10 +156,24 @@ def transcribe_audio(audio_bytes, filename="audio.ogg"):
                 language=None,
                 response_format="text",
             )
-        return transcription.strip()
+        return transcription.strip(), "Groq Whisper V3 Turbo"
     finally:
         os.unlink(tmp_path)
 
+
+def transcribe_audio(audio_bytes, filename="audio.ogg"):
+    """Try AssemblyAI first, fallback to Groq on any error."""
+    if ASSEMBLYAI_API_KEY:
+        try:
+            return transcribe_with_assemblyai(audio_bytes, filename)
+        except Exception:
+            logger.exception("AssemblyAI failed, falling back to Groq")
+    return transcribe_with_groq(audio_bytes, filename)
+
+
+# ─────────────────────────────────────────────
+# Summarization: GPT-5.4 Mini
+# ─────────────────────────────────────────────
 
 def summarize_text(text):
     word_count = len(text.split())
@@ -186,14 +233,15 @@ def process_audio(message, file_id, filename="audio.ogg"):
             return
 
         audio_bytes = download_telegram_file(file_info.file_path)
-        text = transcribe_audio(audio_bytes, filename)
+        text, engine = transcribe_audio(audio_bytes, filename)
         if not text:
             bot.edit_message_text("❌ Не удалось распознать речь.", chat_id=chat_id, message_id=status_msg.message_id)
             return
 
+        logger.info("Transcribed with %s for user %s", engine, user_id)
         stats[user_id]["count"] += 1
         text_key = store_text(text)
-        parts = split_for_telegram(f"📄 Транскрипция:\n\n{text}")
+        parts = split_for_telegram(f"📄 Транскрипция ({engine}):\n\n{text}")
 
         bot.edit_message_text(
             parts[0], chat_id=chat_id, message_id=status_msg.message_id,
@@ -218,7 +266,7 @@ def handle_start(message):
         "🎙️ *Бот-транскрибатор голосовых сообщений*\n\n"
         "Отправь голосовое, кружок или аудиофайл — переведу в текст!\n\n"
         "🔧 *Что умею:*\n"
-        "• Транскрибация голосовых и кружков (Groq Whisper V3 Turbo)\n"
+        "• Транскрибация (AssemblyAI Universal-2 + Groq Whisper)\n"
         "• Аудиофайлы MP3, OGG, WAV, M4A, FLAC\n"
         "• Кнопка 📝 Краткое изложение (GPT-5.4 Mini)\n"
         "• /stats — твоя статистика\n\n"
