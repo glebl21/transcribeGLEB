@@ -28,13 +28,9 @@
 3. Нажми **Create new secret key**
 4. Скопируй ключ
 
-**GPT-5.4 цены:**
-- Input: $2.50 за 1M токенов
-- Output: $15 за 1M токенов
-
 ---
 
-## 🚀 Деплой на Render.com (бесплатно)
+## 🚀 Деплой на Render.com
 
 ### Шаг 1: Создай Web Service
 1. Зайди на **https://render.com** и зарегистрируйся
@@ -47,7 +43,7 @@
 - **Branch**: `main`
 - **Runtime**: `Python 3`
 - **Build Command**: `pip install -r requirements.txt`
-- **Start Command**: `python voice_transcriber_bot.py`
+- **Start Command**: `gunicorn bot:app --bind 0.0.0.0:$PORT --timeout 120`
 - **Instance Type**: `Free`
 
 ### Шаг 3: Добавь переменные окружения
@@ -55,9 +51,37 @@
 - `TELEGRAM_BOT_TOKEN` = твой токен от BotFather
 - `GROQ_API_KEY` = твой Groq API ключ
 - `OPENAI_API_KEY` = твой OpenAI API ключ
+- `WEBHOOK_SECRET` = любой секретный ключ (например `mysecret123`)
+
+> Render автоматически задаёт `RENDER_EXTERNAL_URL` — бот сам настроит вебхук.
 
 ### Шаг 4: Деплой
-Нажми **Create Web Service** - бот автоматически задеплоится и запустится!
+Нажми **Create Web Service** — бот автоматически задеплоится и настроит вебхук!
+
+---
+
+## 🚂 Деплой на Railway
+
+### Шаг 1: Создай проект
+1. Зайди на **https://railway.com** и зарегистрируйся
+2. Нажми **New Project** → **Deploy from GitHub repo**
+3. Подключи репозиторий: `https://github.com/glebl21/transcribeGLEB.git`
+
+### Шаг 2: Добавь переменные окружения
+В настройках сервиса (Variables) добавь:
+- `TELEGRAM_BOT_TOKEN` = твой токен от BotFather
+- `GROQ_API_KEY` = твой Groq API ключ
+- `OPENAI_API_KEY` = твой OpenAI API ключ
+- `WEBHOOK_SECRET` = любой секретный ключ
+
+### Шаг 3: Настрой домен
+1. Перейди в **Settings → Networking → Public Networking**
+2. Нажми **Generate Domain** (получишь `*.up.railway.app`)
+
+> Railway автоматически задаёт `RAILWAY_PUBLIC_DOMAIN` — бот сам настроит вебхук.
+
+### Шаг 4: Деплой
+Railway автоматически задеплоит бот после коммита в main!
 
 ---
 
@@ -66,6 +90,7 @@
 | Функция | Описание |
 |---|---|
 | 🎤 Голосовые сообщения | Транскрибирует ГС из Telegram |
+| 🔵 Кружки (видеосообщения) | Транскрибирует видеокружки |
 | 🎵 Аудио файлы | MP3, OGG, WAV, M4A, FLAC и другие форматы |
 | 🌍 Автоопределение языка | Русский, английский и 50+ языков |
 | 📝 Краткое изложение | Саммари через GPT-5.4 одной кнопкой |
@@ -76,7 +101,7 @@
 ## 🤖 Как пользоваться
 
 1. Запусти бота командой `/start`
-2. Отправь **голосовое сообщение**
+2. Отправь **голосовое сообщение**, **кружок** или **аудиофайл**
 3. Получи **транскрипцию текста**
 4. Нажми кнопку **📝 Краткое изложение** для саммари
 
@@ -84,27 +109,23 @@
 
 ## 🛠️ Используемые технологии
 
-- **Groq Whisper Large V3 Turbo** — самая точная и быстрая модель для транскрибации (бесплатно)
-- **OpenAI GPT-5.4** — frontier модель для профессиональных задач и саммари
+- **Groq Whisper Large V3 Turbo** — быстрая и точная модель для транскрибации (бесплатно)
+- **OpenAI GPT-5.4** — frontier модель для саммари
 - **pyTelegramBotAPI** — работа с Telegram API
+- **Flask + Gunicorn** — webhook-сервер для продакшена
 
 ---
 
 ## 💻 Локальный запуск
 
-### Установка зависимостей
 ```bash
 pip install -r requirements.txt
-```
 
-### Настройка переменных окружения
-```bash
 export TELEGRAM_BOT_TOKEN="твой_токен"
 export GROQ_API_KEY="твой_groq_ключ"
 export OPENAI_API_KEY="твой_openai_ключ"
+
+python bot.py
 ```
 
-### Запуск
-```bash
-python voice_transcriber_bot.py
-```
+При локальном запуске бот работает в режиме polling (без вебхука).

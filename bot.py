@@ -2,18 +2,21 @@ import hashlib
 import logging
 import os
 import tempfile
+import time as _time
 from collections import defaultdict
 
 import requests
 import telebot
 from flask import Flask, request, abort
 from groq import Groq
+from openai import OpenAI
 from telebot.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "mysecret")
+PORT = int(os.environ.get("PORT", 5000))
 
 MAX_TELEGRAM_MESSAGE_LENGTH = 4096
 
@@ -21,6 +24,8 @@ if not TELEGRAM_BOT_TOKEN:
     raise RuntimeError("TELEGRAM_BOT_TOKEN is required")
 if not GROQ_API_KEY:
     raise RuntimeError("GROQ_API_KEY is required")
+if not OPENAI_API_KEY:
+    raise RuntimeError("OPENAI_API_KEY is required")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -28,9 +33,43 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
 groq_client = Groq(api_key=GROQ_API_KEY)
+openai_client = OpenAI(api_key=OPENAI_API_KEY)
 
 transcription_store = {}
 stats = defaultdict(lambda: {"count": 0, "summaries": 0})
+
+
+# ─────────────────────────────────────────────
+# Webhook URL detection (Render / Railway)
+# ─────────────────────────────────────────────
+
+def get_webhook_base_url():
+    url = os.environ.get("WEBHOOK_URL")
+    if url:
+        return url.rstrip("/")
+    url = os.environ.get("RENDER_EXTERNAL_URL")
+    if url:
+        return url.rstrip("/")
+    domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN")
+    if domain:
+        return f"https://{domain}"
+    return None
+
+
+def setup_webhook():
+    base_url = get_webhook_base_url()
+    if not base_url:
+        return False
+    webhook_full = f"{base_url}/webhook/{WEBHOOK_SECRET}"
+    try:
+        bot.remove_webhook()
+        _time.sleep(0.5)
+        bot.set_webhook(url=webhook_full)
+        logger.info("Webhook set: %s", webhook_full)
+        return True
+    except Exception:
+        logger.exception("Failed to set webhook")
+        return False
 
 
 # ─────────────────────────────────────────────
@@ -68,11 +107,10 @@ def download_telegram_file(file_path):
             response = requests.get(file_url, timeout=60)
             response.raise_for_status()
             return response.content
-        except Exception as e:
+        except Exception:
             if attempt == 2:
                 raise
-            import time
-            time.sleep(2)
+            _time.sleep(2)
 
 
 def transcribe_audio(audio_bytes, filename="audio.ogg"):
@@ -84,7 +122,7 @@ def transcribe_audio(audio_bytes, filename="audio.ogg"):
         with open(tmp_path, "rb") as audio_file:
             transcription = groq_client.audio.transcriptions.create(
                 file=(filename, audio_file.read()),
-                model="whisper-large-v3",
+                model="whisper-large-v3-turbo",
                 language=None,
                 response_format="text",
             )
@@ -94,37 +132,24 @@ def transcribe_audio(audio_bytes, filename="audio.ogg"):
 
 
 def summarize_text(text):
-    if GEMINI_API_KEY:
-        try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
-            payload = {"contents": [{"parts": [{"text": (
-                "Сделай краткое саммари этого текста. "
-                "Выдели ключевые мысли и выводы. "
-                "Отвечай на том же языке что и текст. "
-                "Используй маркированный список (•).\n\n" + text
-            )}]}]}
-            response = requests.post(url, json=payload, timeout=15)
-            if response.status_code == 200:
-                result = response.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-                return {"text": result, "model": "Gemini 2.0 Flash ✨"}
-        except Exception:
-            logger.exception("Gemini failed, fallback to Groq")
-
-    result = groq_client.chat.completions.create(
+    result = openai_client.chat.completions.create(
         messages=[
-            {"role": "system", "content": (
-                "Сделай краткое саммари текста. "
-                "Выдели ключевые мысли и выводы. "
-                "Отвечай на том же языке что и текст. "
-                "Используй маркированный список (•)."
-            )},
+            {
+                "role": "system",
+                "content": (
+                    "Сделай краткое саммари текста. "
+                    "Выдели ключевые мысли и выводы. "
+                    "Отвечай на том же языке что и текст. "
+                    "Используй маркированный список (•)."
+                ),
+            },
             {"role": "user", "content": text},
         ],
-        model="llama-3.3-70b-versatile",
+        model="gpt-5.4",
         max_tokens=500,
         temperature=0.4,
     )
-    return {"text": result.choices[0].message.content.strip(), "model": "Groq LLaMA 3.3 70B ⚡"}
+    return {"text": result.choices[0].message.content.strip(), "model": "GPT-5.4"}
 
 
 def make_keyboard(text_key):
@@ -183,9 +208,9 @@ def handle_start(message):
         "🎙️ *Бот-транскрибатор голосовых сообщений*\n\n"
         "Отправь голосовое, кружок или аудиофайл — переведу в текст!\n\n"
         "🔧 *Что умею:*\n"
-        "• Транскрибация голосовых и кружков\n"
+        "• Транскрибация голосовых и кружков (Groq Whisper V3 Turbo)\n"
         "• Аудиофайлы MP3, OGG, WAV, M4A, FLAC\n"
-        "• Кнопка 📝 Краткое изложение после транскрибации\n"
+        "• Кнопка 📝 Краткое изложение (GPT-5.4)\n"
         "• /stats — твоя статистика\n\n"
         "Просто отправь голосовое! 🎤",
         parse_mode="Markdown",
@@ -226,9 +251,9 @@ def handle_audio(message):
 def handle_document(message):
     mime = message.document.mime_type or ""
     filename = (message.document.file_name or "").lower()
-    allowed = ["audio/mpeg","audio/ogg","audio/wav","audio/x-wav","audio/mp4",
-               "audio/m4a","audio/x-m4a","audio/flac","audio/webm","video/mp4","video/webm"]
-    supported_ext = (".mp3",".ogg",".wav",".m4a",".flac",".webm",".mp4")
+    allowed = ["audio/mpeg", "audio/ogg", "audio/wav", "audio/x-wav", "audio/mp4",
+               "audio/m4a", "audio/x-m4a", "audio/flac", "audio/webm", "video/mp4", "video/webm"]
+    supported_ext = (".mp3", ".ogg", ".wav", ".m4a", ".flac", ".webm", ".mp4")
     if mime in allowed or mime.startswith("audio/") or filename.endswith(supported_ext):
         process_audio(message, message.document.file_id, message.document.file_name or "audio.ogg")
 
@@ -268,11 +293,24 @@ def webhook():
 
 @app.route("/", methods=["GET"])
 def index():
-    return "🤖 Bot is running!", 200
+    return "Bot is running!", 200
+
+
+# ─────────────────────────────────────────────
+# Auto-setup webhook on import (for gunicorn)
+# ─────────────────────────────────────────────
+
+if get_webhook_base_url():
+    setup_webhook()
 
 
 if __name__ == "__main__":
-    logger.info("🤖 Бот запущен!")
-    bot.remove_webhook()
-    bot.infinity_polling(timeout=60, long_polling_timeout=60,
-                         allowed_updates=["message", "callback_query"])
+    if get_webhook_base_url():
+        logger.info("Webhook mode — starting Flask on port %s", PORT)
+        setup_webhook()
+        app.run(host="0.0.0.0", port=PORT)
+    else:
+        logger.info("Polling mode — no WEBHOOK_URL / RENDER_EXTERNAL_URL / RAILWAY_PUBLIC_DOMAIN detected")
+        bot.remove_webhook()
+        bot.infinity_polling(timeout=60, long_polling_timeout=60,
+                             allowed_updates=["message", "callback_query"])
