@@ -46,6 +46,8 @@ else:
 
 transcription_store = {}
 stats = defaultdict(lambda: {"count": 0, "summaries": 0})
+processed_updates = set()  # deduplication: хранит последние 1000 update_id
+MAX_PROCESSED_CACHE = 1000
 
 
 # ─────────────────────────────────────────────
@@ -62,7 +64,14 @@ def get_webhook_base_url():
     return None
 
 
+_webhook_configured = False
+
+
 def setup_webhook():
+    global _webhook_configured
+    if _webhook_configured:
+        logger.info("Webhook already configured, skipping duplicate setup")
+        return True
     base_url = get_webhook_base_url()
     if not base_url:
         return False
@@ -71,6 +80,7 @@ def setup_webhook():
         bot.remove_webhook()
         _time.sleep(0.5)
         bot.set_webhook(url=webhook_full)
+        _webhook_configured = True
         logger.info("Webhook set: %s", webhook_full)
         return True
     except Exception:
@@ -350,6 +360,14 @@ def webhook():
     if request.headers.get("content-type") != "application/json":
         abort(403)
     update = telebot.types.Update.de_json(request.get_data(as_text=True))
+    # Защита от дублирования: пропускаем уже обработанные update_id
+    if update.update_id in processed_updates:
+        logger.warning("Duplicate update_id=%s ignored", update.update_id)
+        return "ok", 200
+    processed_updates.add(update.update_id)
+    if len(processed_updates) > MAX_PROCESSED_CACHE:
+        # Удаляем самый старый элемент чтобы не копить память
+        processed_updates.discard(min(processed_updates))
     bot.process_new_updates([update])
     return "ok", 200
 
@@ -370,6 +388,7 @@ if get_webhook_base_url():
 if __name__ == "__main__":
     if get_webhook_base_url():
         logger.info("Webhook mode — starting Flask on port %s", PORT)
+        # setup_webhook() уже вызван выше при импорте, повторный вызов защищён флагом
         setup_webhook()
         app.run(host="0.0.0.0", port=PORT)
     else:
